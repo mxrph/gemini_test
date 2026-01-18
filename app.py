@@ -22,9 +22,9 @@ genai.configure(api_key=API_KEY)
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-# Модели из твоего списка
+# Эти модели из твоего списка точно поддерживают метод generateContent для картинок
 PRIMARY_MODEL_NAME = "models/gemini-3-flash-preview"
-IMAGE_MODEL_NAME = "models/imagen-4.0-generate-001" 
+IMAGE_MODEL_NAME = "models/gemini-3-pro-image-preview" # Или "models/gemini-2.5-flash-image"
 VIDEO_MODEL_NAME = "models/veo-3.0-generate-001"
 
 # Настройки безопасности
@@ -81,36 +81,33 @@ async def list_models_cmd(message: types.Message):
 @dp.message(Command("image"))
 async def image_gen_cmd(message: types.Message):
     prompt = message.text.replace("/image", "").strip()
-    if not prompt:
-        return await message.answer("Введите описание.")
+    if not prompt: return await message.answer("Укажите описание.")
     
     await bot.send_chat_action(message.chat.id, "upload_photo")
     try:
-        # Используем Imagen 4.0
-        model = genai.GenerativeModel(IMAGE_MODEL_NAME)
-        # Генерируем контент (только промпт, без лишних инструкций)
-        response = model.generate_content(prompt, safety_settings=SAFETY_SETTINGS)
+        # Используем гибридную модель из твоего списка
+        model = genai.GenerativeModel("models/gemini-3-pro-image-preview")
+        
+        # Для этих моделей важно явно попросить сгенерировать файл
+        response = model.generate_content(
+            f"Please generate an image based on this description: {prompt}",
+            safety_settings=SAFETY_SETTINGS
+        )
         
         if response.candidates and response.candidates[0].content.parts:
-            part = response.candidates[0].content.parts[0]
-            data_source = getattr(part, 'inline_data', getattr(part, 'blob', None))
-            
-            if data_source:
-                image_bytes = data_source.data
-                if isinstance(image_bytes, str):
-                    image_bytes = base64.b64decode(image_bytes)
-                
-                return await message.answer_photo(
-                    BufferedInputFile(image_bytes, filename="gen.jpg")
-                )
+            for part in response.candidates[0].content.parts:
+                # Ищем данные изображения в частях ответа
+                data_source = getattr(part, 'inline_data', getattr(part, 'blob', None))
+                if data_source:
+                    image_bytes = data_source.data
+                    if isinstance(image_bytes, str):
+                        image_bytes = base64.b64decode(image_bytes)
+                    return await message.answer_photo(BufferedInputFile(image_bytes, filename="gen.jpg"))
         
-        await message.answer("Модель не вернула изображение. Попробуйте другой запрос.")
+        await message.answer("Модель ответила текстом, но не прислала картинку. Попробуйте другой промпт.")
     except Exception as e:
-        logger.error(f"Ошибка Imagen: {e}")
-        if "429" in str(e):
-            await message.answer("Ошибка 429: Лимит исчерпан. Попробуйте через минуту или проверьте аккаунт.")
-        else:
-            await message.answer(f"Ошибка: {e}")
+        logger.error(f"Ошибка: {e}")
+        await message.answer(f"Ошибка: {e}")
 
 @dp.message(Command("video"))
 async def video_gen_cmd(message: types.Message):
@@ -174,3 +171,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
