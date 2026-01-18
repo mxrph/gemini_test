@@ -15,7 +15,7 @@ MY_ID = int(os.getenv("MY_TELEGRAM_ID", "0"))
 
 # Имена моделей для старой библиотеки
 PRIMARY_MODEL = "gemini-2.0-flash-exp"
-FALLBACK_MODEL = "gemini-1.5-flash"
+FALLBACK_MODEL = "gemini-1.5-flash-latest" # Добавили -latest
 
 genai.configure(api_key=API_KEY)
 bot = Bot(token=TOKEN)
@@ -82,3 +82,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
