@@ -17,9 +17,17 @@ genai.configure(api_key=API_KEY)
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-# Список вариантов имен для перебора
-PRIMARY_VARIANTS = ["gemini-2.0-flash-exp", "models/gemini-2.0-flash-exp"]
-FALLBACK_VARIANTS = ["gemini-1.5-flash", "models/gemini-1.5-flash", "gemini-1.5-flash-latest"]
+# Используем модели из твоего актуального списка
+PRIMARY_VARIANTS = [
+    "models/gemini-3-flash-preview",  # Самая новая и быстрая модель 3-й серии
+    "models/gemini-2.5-flash",        # Мощная и стабильная 2.5
+    "models/gemini-2.0-flash"         # Хорошая проверенная 2.0
+]
+
+FALLBACK_VARIANTS = [
+    "models/gemini-2.0-flash-lite",   # Облегченная версия, если основные заняты
+    "models/gemini-2.5-flash-lite"    # Резерв нового поколения
+]
 
 chat_session = None
 
@@ -94,3 +102,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
