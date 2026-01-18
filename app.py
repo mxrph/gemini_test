@@ -20,8 +20,8 @@ bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
 # Модели
-PRIMARY_MODEL = "gemini-1.5-flash" # Рекомендую 1.5 Flash как самую стабильную для API на сегодня
-IMAGE_MODEL = "imagen-3.0-generate-001"
+PRIMARY_MODEL = "gemini-1.5-flash" 
+IMAGE_MODEL = "gemini-1.5-flash" # Используем Flash для генерации, так как Imagen 3 часто требует спец. доступа
 VIDEO_MODEL = "veo-1.0-generate-001"
 
 # Глобальные настройки безопасности для всех моделей
@@ -63,22 +63,32 @@ async def help_cmd(message: types.Message):
 async def image_gen_cmd(message: types.Message):
     prompt = message.text.replace("/image", "").strip()
     if not prompt: return await message.answer("Укажите описание.")
+    
     await bot.send_chat_action(message.chat.id, "upload_photo")
+    
     try:
-        model = genai.GenerativeModel(IMAGE_MODEL, safety_settings=SAFETY_SETTINGS)
-        response = model.generate_content(prompt)
+        # Для генерации изображений через Gemini 1.5 Flash (если доступно в вашем регионе)
+        # или используйте корректный вызов Imagen
+        model = genai.GenerativeModel(PRIMARY_MODEL, safety_settings=SAFETY_SETTINGS)
         
-        if not response.candidates or not response.candidates[0].content.parts:
-            return await message.answer("Запрос заблокирован фильтрами Google. Попробуйте перефразировать.")
-
-        part = response.candidates[0].content.parts[0]
-        image_bytes = getattr(part, 'inline_data', getattr(part, 'blob', None)).data
-        if isinstance(image_bytes, str): image_bytes = base64.b64decode(image_bytes)
+        # Инструкция для модели, чтобы она поняла, что нужно именно ГЕНЕРИРОВАТЬ
+        response = model.generate_content(f"Generate an image based on this prompt: {prompt}")
         
-        await message.answer_photo(BufferedInputFile(image_bytes, filename="gen.jpg"))
+        # Проверяем, есть ли в ответе медиа-данные
+        if response.candidates and response.candidates[0].content.parts:
+            part = response.candidates[0].content.parts[0]
+            
+            # Проверяем наличие blob (данных изображения)
+            if hasattr(part, 'inline_data') or hasattr(part, 'blob'):
+                image_bytes = getattr(part, 'inline_data', getattr(part, 'blob', None)).data
+                if isinstance(image_bytes, str): image_bytes = base64.b64decode(image_bytes)
+                return await message.answer_photo(BufferedInputFile(image_bytes, filename="gen.jpg"))
+        
+        await message.answer("Модель не вернула изображение. Возможно, ваш API-ключ пока поддерживает только текст.")
+        
     except Exception as e:
-        logger.error(f"Ошибка Imagen: {e}")
-        await message.answer(f"Ошибка при создании фото: {e}")
+        logger.error(f"Ошибка генерации: {e}")
+        await message.answer(f"Ошибка: {e}")
 
 @dp.message(Command("video"))
 async def video_gen_cmd(message: types.Message):
@@ -136,3 +146,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
