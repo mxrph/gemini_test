@@ -19,17 +19,25 @@ genai.configure(api_key=API_KEY)
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-# Те самые модели из работающей версии
-PRIMARY_MODEL = "gemini-3-flash-preview"
+# Модели
+PRIMARY_MODEL = "gemini-1.5-flash" # Рекомендую 1.5 Flash как самую стабильную для API на сегодня
 IMAGE_MODEL = "imagen-3.0-generate-001"
 VIDEO_MODEL = "veo-1.0-generate-001"
+
+# Глобальные настройки безопасности для всех моделей
+SAFETY_SETTINGS = [
+    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+]
 
 chat_session = None
 
 async def call_gemini(text, data=None, mime_type=None):
     global chat_session
     try:
-        model = genai.GenerativeModel(PRIMARY_MODEL)
+        model = genai.GenerativeModel(PRIMARY_MODEL, safety_settings=SAFETY_SETTINGS)
         if data:
             content = [{"mime_type": mime_type, "data": data}, text]
             response = model.generate_content(content)
@@ -57,34 +65,39 @@ async def image_gen_cmd(message: types.Message):
     if not prompt: return await message.answer("Укажите описание.")
     await bot.send_chat_action(message.chat.id, "upload_photo")
     try:
-        # Прямой вызов той самой Imagen 3
-        model = genai.GenerativeModel(IMAGE_MODEL)
+        model = genai.GenerativeModel(IMAGE_MODEL, safety_settings=SAFETY_SETTINGS)
         response = model.generate_content(prompt)
-        part = response.candidates[0].content.parts[0]
         
-        # Универсальный захват данных (blob или inline)
+        if not response.candidates or not response.candidates[0].content.parts:
+            return await message.answer("Запрос заблокирован фильтрами Google. Попробуйте перефразировать.")
+
+        part = response.candidates[0].content.parts[0]
         image_bytes = getattr(part, 'inline_data', getattr(part, 'blob', None)).data
         if isinstance(image_bytes, str): image_bytes = base64.b64decode(image_bytes)
         
         await message.answer_photo(BufferedInputFile(image_bytes, filename="gen.jpg"))
     except Exception as e:
         logger.error(f"Ошибка Imagen: {e}")
-        await message.answer("Не удалось создать фото. Попробуйте другой запрос.")
+        await message.answer(f"Ошибка при создании фото: {e}")
 
 @dp.message(Command("video"))
 async def video_gen_cmd(message: types.Message):
     prompt = message.text.replace("/video", "").strip()
     if not prompt: return await message.answer("Укажите описание.")
-    await message.answer("Запрос на видео принят. Ожидайте.")
+    await message.answer("Запрос на видео принят. Ожидайте, это может занять минуту...")
     try:
-        model = genai.GenerativeModel(VIDEO_MODEL)
+        model = genai.GenerativeModel(VIDEO_MODEL, safety_settings=SAFETY_SETTINGS)
         response = model.generate_content(prompt)
+        
+        if not response.candidates or not response.candidates[0].content.parts:
+            return await message.answer("Не удалось создать видео (фильтры или лимиты).")
+
         part = response.candidates[0].content.parts[0]
         video_bytes = getattr(part, 'inline_data', getattr(part, 'blob', None)).data
         if isinstance(video_bytes, str): video_bytes = base64.b64decode(video_bytes)
         await message.answer_video(BufferedInputFile(video_bytes, filename="gen.mp4"))
     except Exception as e:
-        await message.answer("Видео пока недоступно для вашего API-ключа.")
+        await message.answer("Видео пока недоступно для вашего API-ключа или региона.")
 
 @dp.message(Command("reset"))
 async def reset_cmd(message: types.Message):
