@@ -24,10 +24,11 @@ genai.configure(api_key=API_KEY)
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-# Модели
-PRIMARY_MODEL = "models/gemini-3-flash-preview"
-IMAGE_MODEL = "models/imagen-3.0-generate-001"
-VIDEO_MODEL = "models/veo-1.0-generate-001"
+# Модели (убраны префиксы для избежания ошибки 404)
+PRIMARY_MODEL = "gemini-3-flash-preview"
+FALLBACK_MODEL = "gemini-1.5-flash"
+IMAGE_MODEL = "imagen-3.0-generate-001"
+VIDEO_MODEL = "veo-1.0-generate-001"
 
 # Состояния
 chat_session = None
@@ -36,20 +37,23 @@ chat_session = None
 
 async def call_gemini(text, data=None, mime_type=None):
     global chat_session
-    try:
-        model = genai.GenerativeModel(PRIMARY_MODEL)
-        if data:
-            content = [{"mime_type": mime_type, "data": data}, text]
-            response = model.generate_content(content)
-            return response.text
-        else:
-            if chat_session is None:
-                chat_session = model.start_chat(history=[])
-            response = chat_session.send_message(text)
-            return response.text
-    except Exception as e:
-        logger.error(f"Ошибка API: {e}")
-        return "Произошла ошибка при обращении к серверу."
+    # Пытаемся вызвать сначала Gemini 3, потом 1.5 в случае сбоя
+    for model_name in [PRIMARY_MODEL, FALLBACK_MODEL]:
+        try:
+            model = genai.GenerativeModel(model_name)
+            if data:
+                content = [{"mime_type": mime_type, "data": data}, text]
+                response = model.generate_content(content)
+                return response.text
+            else:
+                if chat_session is None:
+                    chat_session = model.start_chat(history=[])
+                response = chat_session.send_message(text)
+                return response.text
+        except Exception as e:
+            logger.error(f"Сбой модели {model_name}: {e}")
+            continue
+    return "Произошла ошибка при обращении к серверу."
 
 # --- Обработчики команд ---
 
@@ -90,20 +94,21 @@ async def image_gen_cmd(message: types.Message):
         response = model.generate_content(prompt)
         
         part = response.candidates[0].content.parts[0]
+        # Обработка данных для Imagen 3
         if hasattr(part, 'inline_data'):
             image_bytes = part.inline_data.data
         elif hasattr(part, 'blob'):
             image_bytes = part.blob.data
         else:
-            raise Exception("Данные изображения не найдены.")
+            raise Exception("Данные изображения отсутствуют.")
 
         if isinstance(image_bytes, str):
             image_bytes = base64.b64decode(image_bytes)
 
         await message.answer_photo(BufferedInputFile(image_bytes, filename="gen.jpg"))
     except Exception as e:
-        logger.error(f"Ошибка генерации изображения: {e}")
-        await message.answer(f"Не удалось создать изображение. Ошибка: {str(e)[:100]}")
+        logger.error(f"Ошибка генерации фото: {e}")
+        await message.answer(f"Не удалось создать фото. Попробуйте изменить описание.")
 
 @dp.message(Command("video"))
 async def video_gen_cmd(message: types.Message):
@@ -116,7 +121,6 @@ async def video_gen_cmd(message: types.Message):
     try:
         model = genai.GenerativeModel(VIDEO_MODEL)
         response = model.generate_content(prompt)
-        # Обработка видеофайла аналогична фото, но возвращает другой mime_type
         part = response.candidates[0].content.parts[0]
         video_data = part.inline_data.data if hasattr(part, 'inline_data') else part.blob.data
         
@@ -126,7 +130,7 @@ async def video_gen_cmd(message: types.Message):
         await message.answer_video(BufferedInputFile(video_data, filename="gen.mp4"))
     except Exception as e:
         logger.error(f"Ошибка генерации видео: {e}")
-        await message.answer(f"Не удалось создать видео. Причина: модель Veo может быть недоступна для вашего региона или ключа.")
+        await message.answer("Модель видео пока недоступна для вашей учетной записи.")
 
 # --- Обработка медиаконтента ---
 
