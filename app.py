@@ -5,8 +5,7 @@ import time
 import base64
 from io import BytesIO
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.types import BufferedInputFile, BotCommand, InlineKeyboardButton
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import BufferedInputFile
 from aiogram.filters import Command
 import google.generativeai as genai
 from aiohttp import web
@@ -27,162 +26,147 @@ dp = Dispatcher()
 
 # Модели
 PRIMARY_MODEL = "models/gemini-3-flash-preview"
-FALLBACK_MODEL = "models/gemini-1.5-flash"
 IMAGE_MODEL = "models/imagen-3.0-generate-001"
+VIDEO_MODEL = "models/veo-1.0-generate-001"
 
 # Состояния
 chat_session = None
-translate_mode = {}  
-user_languages = {}  
-usage_stats = {"text": 0, "image": 0, "last_reset": time.time()}
-
-# --- Клавиатуры ---
-
-def get_main_menu():
-    builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="🎨 Создать фото", callback_data="btn_image"),
-                InlineKeyboardButton(text="🌍 Переводчик", callback_data="btn_translate"))
-    builder.row(InlineKeyboardButton(text="📊 Лимиты", callback_data="btn_limits"),
-                InlineKeyboardButton(text="🧹 Сброс чата", callback_data="btn_reset"))
-    return builder.as_markup()
-
-def get_lang_menu():
-    builder = InlineKeyboardBuilder()
-    langs = {"English 🇬🇧": "английский", "Japanese 🇯🇵": "японский", "German 🇩🇪": "немецкий", "Chinese 🇨🇳": "китайский"}
-    for name, code in langs.items():
-        builder.add(InlineKeyboardButton(text=name, callback_data=f"lang_{code}"))
-    builder.adjust(2)
-    return builder.as_markup()
 
 # --- Логика Gemini ---
 
-async def call_gemini(text, data=None, mime_type=None, user_id=None):
+async def call_gemini(text, data=None, mime_type=None):
     global chat_session
-    for model_name in [PRIMARY_MODEL, FALLBACK_MODEL]:
-        try:
-            model = genai.GenerativeModel(model_name)
-            
-            if user_id and translate_mode.get(user_id):
-                target = user_languages.get(user_id, "английский")
-                text = f"Переведи на {target}. Если уже на нем, переведи на русский: {text}"
-
-            if data:
-                content = [{"mime_type": mime_type, "data": data}, text]
-                response = model.generate_content(content)
-            else:
-                if chat_session is None:
-                    chat_session = model.start_chat(history=[])
-                response = chat_session.send_message(text)
-            
-            usage_stats["text"] += 1
+    try:
+        model = genai.GenerativeModel(PRIMARY_MODEL)
+        if data:
+            content = [{"mime_type": mime_type, "data": data}, text]
+            response = model.generate_content(content)
             return response.text
-        except Exception as e:
-            logger.error(f"Сбой модели {model_name}: {e}")
-            continue
-    return "❌ Все модели сейчас недоступны. Попробуйте позже."
-
-# --- Обработчики Callback-кнопок ---
-
-@dp.callback_query(F.data.startswith("lang_"))
-async def set_lang(call: types.CallbackQuery):
-    lang = call.data.split("_")[1]
-    user_languages[call.from_user.id] = lang
-    await call.message.answer(f"✅ Язык перевода установлен: {lang.capitalize()}")
-    await call.answer()
-
-@dp.callback_query(F.data.startswith("btn_"))
-async def callbacks(call: types.CallbackQuery):
-    action = call.data.split("_")[1]
-    if action == "image": await call.message.answer("Чтобы создать фото, напиши: `/image описание`")
-    elif action == "translate": await toggle_translate(call.message)
-    elif action == "limits": await limits_cmd(call.message)
-    elif action == "reset": await reset_cmd(call.message)
-    await call.answer()
+        else:
+            if chat_session is None:
+                chat_session = model.start_chat(history=[])
+            response = chat_session.send_message(text)
+            return response.text
+    except Exception as e:
+        logger.error(f"Ошибка API: {e}")
+        return "Произошла ошибка при обращении к серверу."
 
 # --- Обработчики команд ---
 
 @dp.message(Command("start"))
-async def start(m: types.Message):
-    await m.answer("🚀 Бот Gemini 3 готов. Используйте меню:", reply_markup=get_main_menu())
+async def start_cmd(message: types.Message):
+    await message.answer("Бот запущен. Используйте /help для просмотра списка функций.")
 
-@dp.message(Command("translate"))
-async def toggle_translate(m: types.Message):
-    uid = m.from_user.id
-    translate_mode[uid] = not translate_mode.get(uid, False)
-    if translate_mode[uid]:
-        await m.answer("🌍 Режим перевода ВКЛЮЧЕН. Выберите язык:", reply_markup=get_lang_menu())
-    else:
-        await m.answer("⚪ Режим перевода ВЫКЛЮЧЕН.")
+@dp.message(Command("help"))
+async def help_cmd(message: types.Message):
+    help_text = (
+        "Список доступных функций:\n\n"
+        "Текстовое общение: Просто отправьте сообщение в чат.\n"
+        "Анализ изображений: Пришлите фото с вопросом в подписи.\n"
+        "Анализ PDF: Отправьте документ в формате PDF.\n"
+        "Голосовые сообщения: Бот распознает речь и ответит текстом.\n"
+        "Генерация изображений: Команда /image [описание].\n"
+        "Генерация видео: Команда /video [описание].\n"
+        "Сброс контекста: Команда /reset."
+    )
+    await message.answer(help_text)
+
+@dp.message(Command("reset"))
+async def reset_cmd(message: types.Message):
+    global chat_session
+    chat_session = None
+    await message.answer("История диалога очищена.")
 
 @dp.message(Command("image"))
-async def gen_image(m: types.Message):
-    prompt = m.text.replace("/image", "").strip()
-    if not prompt: return await m.answer("Укажите описание для генерации фото.")
-    await bot.send_chat_action(m.chat.id, "upload_photo")
+async def image_gen_cmd(message: types.Message):
+    if MY_ID and message.from_user.id != MY_ID: return
+    prompt = message.text.replace("/image", "").strip()
+    if not prompt:
+        return await message.answer("Укажите описание изображения.")
+
+    await bot.send_chat_action(message.chat.id, "upload_photo")
     try:
         model = genai.GenerativeModel(IMAGE_MODEL)
         response = model.generate_content(prompt)
-        # Улучшенный захват байтов
-        part = response.candidates[0].content.parts[0]
-        img_data = part.inline_data.data if hasattr(part, 'inline_data') else part.blob.data
-        if isinstance(img_data, str): img_data = base64.b64decode(img_data)
         
-        await m.answer_photo(BufferedInputFile(img_data, filename="gen.jpg"), reply_markup=get_main_menu())
-        usage_stats["image"] += 1
+        part = response.candidates[0].content.parts[0]
+        if hasattr(part, 'inline_data'):
+            image_bytes = part.inline_data.data
+        elif hasattr(part, 'blob'):
+            image_bytes = part.blob.data
+        else:
+            raise Exception("Данные изображения не найдены.")
+
+        if isinstance(image_bytes, str):
+            image_bytes = base64.b64decode(image_bytes)
+
+        await message.answer_photo(BufferedInputFile(image_bytes, filename="gen.jpg"))
     except Exception as e:
-        logger.error(f"Ошибка фото: {e}")
-        await m.answer(f"❌ Не удалось создать фото. Попробуйте другой запрос.", reply_markup=get_main_menu())
+        logger.error(f"Ошибка генерации изображения: {e}")
+        await message.answer(f"Не удалось создать изображение. Ошибка: {str(e)[:100]}")
 
 @dp.message(Command("video"))
-async def gen_video(m: types.Message):
-    await m.answer("⏳ Модель видео (Veo) сейчас в режиме ожидания доступа. Ожидайте уведомления в Google Cloud.", reply_markup=get_main_menu())
+async def video_gen_cmd(message: types.Message):
+    if MY_ID and message.from_user.id != MY_ID: return
+    prompt = message.text.replace("/video", "").strip()
+    if not prompt:
+        return await message.answer("Укажите описание видео.")
 
-@dp.message(Command("limits"))
-async def limits_cmd(m: types.Message):
-    await m.answer(f"📊 Использовано сегодня:\n💬 Текст: {usage_stats['text']}\n🖼️ Фото: {usage_stats['image']}", reply_markup=get_main_menu())
+    await message.answer("Запрос на генерацию видео принят. Это может занять несколько минут.")
+    try:
+        model = genai.GenerativeModel(VIDEO_MODEL)
+        response = model.generate_content(prompt)
+        # Обработка видеофайла аналогична фото, но возвращает другой mime_type
+        part = response.candidates[0].content.parts[0]
+        video_data = part.inline_data.data if hasattr(part, 'inline_data') else part.blob.data
+        
+        if isinstance(video_data, str):
+            video_data = base64.b64decode(video_data)
+            
+        await message.answer_video(BufferedInputFile(video_data, filename="gen.mp4"))
+    except Exception as e:
+        logger.error(f"Ошибка генерации видео: {e}")
+        await message.answer(f"Не удалось создать видео. Причина: модель Veo может быть недоступна для вашего региона или ключа.")
 
-@dp.message(Command("reset"))
-async def reset_cmd(m: types.Message):
-    global chat_session
-    chat_session = None
-    await m.answer("🧹 История чата очищена.", reply_markup=get_main_menu())
-
-# --- Обработка медиа и текста ---
+# --- Обработка медиаконтента ---
 
 @dp.message(F.voice)
-async def voice_msg(m: types.Message):
-    file = await bot.get_file(m.voice.file_id)
-    data = await bot.download_file(file.file_path)
-    ans = await call_gemini("Ответь на голосовое:", data.read(), "audio/ogg", m.from_user.id)
-    await m.reply(ans, reply_markup=get_main_menu())
+async def handle_voice(message: types.Message):
+    file_info = await bot.get_file(message.voice.file_id)
+    data = await bot.download_file(file_info.file_path)
+    ans = await call_gemini("Прослушай и ответь на сообщение:", data.read(), "audio/ogg")
+    await message.reply(ans)
 
 @dp.message(F.document)
-async def doc_msg(m: types.Message):
-    if m.document.mime_type == "application/pdf":
-        file = await bot.get_file(m.document.file_id)
-        data = await bot.download_file(file.file_path)
-        ans = await call_gemini("Проанализируй PDF:", data.read(), "application/pdf", m.from_user.id)
-        await m.answer(ans, reply_markup=get_main_menu())
+async def handle_docs(message: types.Message):
+    if message.document.mime_type == "application/pdf":
+        file_info = await bot.get_file(message.document.file_id)
+        data = await bot.download_file(file_info.file_path)
+        ans = await call_gemini("Проанализируй этот PDF документ:", data.read(), "application/pdf")
+        await message.answer(ans)
 
 @dp.message(F.photo)
-async def photo_msg(m: types.Message):
-    file = await bot.get_file(m.photo[-1].file_id)
-    data = await bot.download_file(file.file_path)
-    ans = await call_gemini(m.caption or "Что на фото?", data.read(), "image/jpeg", m.from_user.id)
-    await m.answer(ans, reply_markup=get_main_menu())
+async def handle_photo(message: types.Message):
+    prompt = message.caption or "Что на этом изображении?"
+    file_info = await bot.get_file(message.photo[-1].file_id)
+    data = await bot.download_file(file_info.file_path)
+    ans = await call_gemini(prompt, data.read(), "image/jpeg")
+    await message.answer(ans)
 
 @dp.message(F.text)
-async def text_msg(m: types.Message):
-    if MY_ID and m.from_user.id != MY_ID: return
-    ans = await call_gemini(m.text, user_id=m.from_user.id)
-    await m.answer(ans, reply_markup=get_main_menu())
+async def handle_text(message: types.Message):
+    if MY_ID and message.from_user.id != MY_ID: return
+    ans = await call_gemini(message.text)
+    await message.answer(ans)
 
-# --- Запуск ---
-async def health(request): return web.Response(text="OK")
+# --- Настройка Web-сервера ---
+async def health_check(request): return web.Response(text="OK")
 
 async def main():
-    server = web.Application(); server.router.add_get("/", health)
-    runner = web.AppRunner(server); await runner.setup()
+    server = web.Application()
+    server.router.add_get("/", health_check)
+    runner = web.AppRunner(server)
+    await runner.setup()
     await web.TCPSite(runner, "0.0.0.0", 8000).start()
     await dp.start_polling(bot)
 
