@@ -24,7 +24,7 @@ dp = Dispatcher()
 
 # Эти модели из твоего списка точно поддерживают метод generateContent для картинок
 PRIMARY_MODEL_NAME = "models/gemini-3-flash-preview"
-IMAGE_MODEL_NAME = "models/gemini-3-pro-image-preview" # Или "models/gemini-2.5-flash-image"
+IMAGE_MODEL_NAME = "models/gemini-2.5-flash-image"
 VIDEO_MODEL_NAME = "models/veo-3.0-generate-001"
 
 # Настройки безопасности
@@ -171,4 +171,5 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
