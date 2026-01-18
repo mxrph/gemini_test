@@ -138,8 +138,9 @@ async def start_web_server():
 async def main():
     global chat, client
     
-    # Запускаем фиктивный сервер в фоне
+    # 1. Запускаем сервер ПЕРВЫМ, чтобы Koyeb сразу прошел Health Check
     await start_web_server()
+    logger.info("Health Check server is live.")
 
     if not API_KEY or not TOKEN:
         logger.error("Missing credentials!")
@@ -155,17 +156,16 @@ async def main():
         logger.error(f"Init failed: {e}")
         return
 
-    # Уменьшаем время ожидания, на Koyeb сеть работает сразу
-    await asyncio.sleep(5)
-
+    # 2. На Koyeb сеть работает мгновенно, убираем долгие ожидания
     try:
         ip = socket.gethostbyname('api.telegram.org')
-        logger.info(f"Telegram DNS OK: {ip}")
+        logger.info(f"Network check: Telegram IP found: {ip}")
     except Exception as e:
-        logger.error(f"DNS failed: {e}")
+        logger.warn(f"DNS not ready yet, but continuing... {e}")
 
     logger.info("Starting polling...")
     try:
+        # 3. Сбрасываем вебхуки и запускаем бота
         await bot.delete_webhook(drop_pending_updates=True)
         await dp.start_polling(bot)
     except Exception as e:
