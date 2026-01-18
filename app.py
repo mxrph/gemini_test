@@ -38,15 +38,24 @@ async def call_gemini(text, data=None, mime_type=None):
         if data:
             content = [{"mime_type": mime_type, "data": data}, text]
             response = model.generate_content(content)
-            return response.text if response.candidates else "Ошибка: Модель не ответила."
         else:
             if chat_session is None:
                 chat_session = model.start_chat(history=[])
             response = chat_session.send_message(text)
+        
+        # Безопасная проверка ответа
+        if response.candidates and response.candidates[0].content.parts:
             return response.text
+        else:
+            # Если модель закончила генерацию, но текста нет
+            return "Модель не смогла сформировать ответ. Попробуйте другой запрос или используйте /reset."
+            
     except Exception as e:
-        logger.error(f"Ошибка: {e}")
-        return f"Ошибка (возможно, лимиты): {e}"
+        logger.error(f"Ошибка Gemini: {e}")
+        # Если это лимит, выводим понятное сообщение
+        if "429" in str(e):
+            return "Достигнут лимит запросов. Пожалуйста, подождите или попробуйте позже."
+        return f"Произошла ошибка: {e}"
 
 @dp.message(Command("start"))
 async def start_cmd(message: types.Message):
@@ -144,3 +153,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
