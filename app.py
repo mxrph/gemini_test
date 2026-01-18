@@ -43,19 +43,15 @@ async def call_gemini(text, data=None, mime_type=None):
                 chat_session = model.start_chat(history=[])
             response = chat_session.send_message(text)
         
-        # Безопасная проверка ответа
         if response.candidates and response.candidates[0].content.parts:
             return response.text
-        else:
-            # Если модель закончила генерацию, но текста нет
-            return "Модель не смогла сформировать ответ. Попробуйте другой запрос или используйте /reset."
+        return "Модель не смогла сформировать ответ. Попробуйте позже или используйте /reset."
             
     except Exception as e:
         logger.error(f"Ошибка Gemini: {e}")
-        # Если это лимит, выводим понятное сообщение
         if "429" in str(e):
             return "Достигнут лимит запросов. Пожалуйста, подождите или попробуйте позже."
-        return f"Произошла ошибка: {e}"
+        return f"Ошибка: {e}"
 
 @dp.message(Command("start"))
 async def start_cmd(message: types.Message):
@@ -64,10 +60,10 @@ async def start_cmd(message: types.Message):
 @dp.message(Command("help"))
 async def help_cmd(message: types.Message):
     await message.answer(
-        "Функции:\n\n"
-        "Текст: Просто пишите.\n"
-        "Голос и Видео-кружочки: Присылайте, я их проанализирую.\n"
-        "Файлы: Фото и PDF (с вопросом в подписи).\n"
+        "Список возможностей:\n\n"
+        "Текстовый чат: Просто пишите.\n"
+        "Голос и Видео: Присылайте сообщения, я их проанализирую.\n"
+        "Файлы: Фото и PDF (с вопросом в описании).\n"
         "Картинки: /image [описание].\n"
         "Сброс: /reset."
     )
@@ -76,26 +72,22 @@ async def help_cmd(message: types.Message):
 async def reset_cmd(message: types.Message):
     global chat_session
     chat_session = None
-    await message.answer("История очищена.")
+    await message.answer("История чата очищена.")
 
-# ХЕНДЛЕР ДЛЯ ВИДЕО-КРУЖОЧКОВ
 @dp.message(F.video_note)
 async def handle_video_note(message: types.Message):
     await bot.send_chat_action(message.chat.id, "record_video")
-    try:
-        file_info = await bot.get_file(message.video_note.file_id)
-        file_data = await bot.download_file(file_info.file_path)
-        ans = await call_gemini("Проанализируй это видео и ответь на вопросы, если они подразумеваются:", file_data.read(), "video/mp4")
-        await message.answer(ans)
-    except Exception as e:
-        await message.answer(f"Ошибка видео: {e}")
+    file_info = await bot.get_file(message.video_note.file_id)
+    file_data = await bot.download_file(file_info.file_path)
+    ans = await call_gemini("Проанализируй это видео:", file_data.read(), "video/mp4")
+    await message.answer(ans)
 
 @dp.message(F.voice)
 async def handle_voice(message: types.Message):
     await bot.send_chat_action(message.chat.id, "typing")
     file_info = await bot.get_file(message.voice.file_id)
     file_data = await bot.download_file(file_info.file_path)
-    ans = await call_gemini("Ответь на это голосовое сообщение:", file_data.read(), "audio/ogg")
+    ans = await call_gemini("Ответь на это голосовое:", file_data.read(), "audio/ogg")
     await message.answer(ans)
 
 @dp.message(F.photo)
@@ -110,13 +102,14 @@ async def handle_docs(message: types.Message):
     if message.document.mime_type == "application/pdf":
         file_info = await bot.get_file(message.document.file_id)
         data = await bot.download_file(file_info.file_path)
-        ans = await call_gemini("Проанализируй PDF:", data.read(), "application/pdf")
+        ans = await call_gemini("Проанализируй этот PDF:", data.read(), "application/pdf")
         await message.answer(ans)
 
 @dp.message(Command("image"))
 async def image_gen_cmd(message: types.Message):
     prompt = message.text.replace("/image", "").strip()
-    if not prompt: return await message.answer("Введите описание.")
+    if not prompt: return await message.answer("Укажите описание.")
+    await bot.send_chat_action(message.chat.id, "upload_photo")
     try:
         model = genai.GenerativeModel(IMAGE_MODEL_NAME)
         response = model.generate_content(f"Generate image: {prompt}", safety_settings=SAFETY_SETTINGS)
@@ -127,7 +120,7 @@ async def image_gen_cmd(message: types.Message):
                     image_bytes = data_source.data
                     if isinstance(image_bytes, str): image_bytes = base64.b64decode(image_bytes)
                     return await message.answer_photo(BufferedInputFile(image_bytes, filename="gen.jpg"))
-        await message.answer("Лимит генерации фото исчерпан.")
+        await message.answer("Генерация недоступна (лимиты).")
     except Exception as e:
         await message.answer(f"Ошибка: {e}")
 
@@ -141,8 +134,8 @@ async def main():
     await bot.set_my_commands([
         BotCommand(command="start", description="Запуск"),
         BotCommand(command="help", description="Помощь"),
-        BotCommand(command="image", description="Фото"),
-        BotCommand(command="reset", description="Сброс")
+        BotCommand(command="image", description="Генерация фото"),
+        BotCommand(command="reset", description="Сброс чата")
     ])
     app = web.Application()
     app.router.add_get("/", lambda r: web.Response(text="OK"))
@@ -153,4 +146,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
