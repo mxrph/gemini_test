@@ -24,7 +24,7 @@ dp = Dispatcher()
 
 # АКТУАЛЬНЫЕ МОДЕЛИ ИЗ ТВОЕГО СПИСКА (2026)
 PRIMARY_MODEL_NAME = "models/gemini-3-flash-preview"
-IMAGE_MODEL_NAME = "models/imagen-4.0-generate-001"
+IMAGE_MODEL_NAME = "models/gemini-2.5-flash-image"
 VIDEO_MODEL_NAME = "models/veo-3.0-generate-001"
 
 # Настройки безопасности (отключаем лишние блокировки)
@@ -71,33 +71,27 @@ async def help_cmd(message: types.Message):
 @dp.message(Command("image"))
 async def image_gen_cmd(message: types.Message):
     prompt = message.text.replace("/image", "").strip()
-    if not prompt:
-        return await message.answer("Пожалуйста, введите описание после команды /image.")
+    if not prompt: return await message.answer("Укажите описание.")
     
     await bot.send_chat_action(message.chat.id, "upload_photo")
     try:
         model = genai.GenerativeModel(IMAGE_MODEL_NAME, safety_settings=SAFETY_SETTINGS)
-        response = model.generate_content(prompt)
+        # Добавляем явную инструкцию для генерации
+        response = model.generate_content(f"Generate a high-quality image of: {prompt}")
         
         if response.candidates and response.candidates[0].content.parts:
             part = response.candidates[0].content.parts[0]
-            # Получаем данные изображения (поддержка blob и inline_data)
-            image_data = getattr(part, 'inline_data', getattr(part, 'blob', None))
-            
-            if image_data:
-                image_bytes = image_data.data
-                if isinstance(image_bytes, str):
-                    image_bytes = base64.b64decode(image_bytes)
-                
-                return await message.answer_photo(
-                    BufferedInputFile(image_bytes, filename="generated_image.jpg"),
-                    caption=f"Результат Imagen 4.0 по запросу: {prompt[:50]}..."
-                )
+            # Проверяем наличие медиа-данных
+            data_source = getattr(part, 'inline_data', getattr(part, 'blob', None))
+            if data_source:
+                image_bytes = data_source.data
+                if isinstance(image_bytes, str): image_bytes = base64.b64decode(image_bytes)
+                return await message.answer_photo(BufferedInputFile(image_bytes, filename="gen.jpg"))
         
-        await message.answer("Не удалось сгенерировать изображение. Возможно, запрос отклонен фильтрами.")
+        await message.answer("Модель не вернула изображение. Попробуйте другой промпт.")
     except Exception as e:
-        logger.error(f"Ошибка Imagen 4.0: {e}")
-        await message.answer(f"Ошибка генерации: {e}")
+        logger.error(f"Ошибка: {e}")
+        await message.answer(f"Ошибка: {e}")
 
 @dp.message(Command("video"))
 async def video_gen_cmd(message: types.Message):
@@ -179,3 +173,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
         logger.info("Бот остановлен")
+
