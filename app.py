@@ -21,9 +21,8 @@ MY_ID_STR = os.getenv("MY_TELEGRAM_ID", "0")
 MY_ID = int(MY_ID_STR) if MY_ID_STR.isdigit() else 0
 
 # Модели
-PRIMARY_MODEL = "gemini-2.0-flash"
-FALLBACK_MODEL = "gemini-1.5-flash"
-SYSTEM_PROMPT = "You are a professional AI assistant. Provide concise and accurate answers. Do not use emojis. Keep professional tone."
+PRIMARY_MODEL = "models/gemini-2.0-flash"
+FALLBACK_MODEL = "models/gemini-1.5-flash"
 
 # Инициализация
 session = AiohttpSession()
@@ -145,3 +144,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
