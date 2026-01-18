@@ -95,20 +95,40 @@ async def limits_cmd(message: types.Message):
     await message.answer(msg)
 
 @dp.message(Command("image"))
+@dp.message(Command("image"))
 async def image_gen_cmd(message: types.Message):
+    if MY_ID and message.from_user.id != MY_ID: return
     prompt = message.text.replace("/image", "").strip()
-    if not prompt: return await message.answer("Опишите картинку.")
-    
+    if not prompt: 
+        return await message.answer("Укажите описание, например: `/image кот в космосе`.")
+
+    if usage_stats["image"] >= LIMITS["image"]:
+        return await message.answer("⚠️ Лимит генерации фото исчерпан.")
+
     await bot.send_chat_action(message.chat.id, "upload_photo")
     try:
-        model = genai.ImageGenerationModel("imagen-3.0-generate-001")
-        response = model.generate_images(prompt=prompt, number_of_images=1)
-        byte_io = BytesIO()
-        response.images[0]._pil_image.save(byte_io, 'JPEG')
-        await message.answer_photo(BufferedInputFile(byte_io.getvalue(), filename="gen.jpg"))
+        # Универсальный способ вызова Imagen через обычный GenerativeModel
+        model = genai.GenerativeModel(IMAGE_GEN_MODEL)
+        
+        # Запрашиваем генерацию
+        response = model.generate_content(prompt)
+        
+        # Извлекаем байты (Google API возвращает их в разном виде в зависимости от версии)
+        try:
+            # Пытаемся достать через inline_data (самый частый случай)
+            img_data = response.candidates[0].content.parts[0].inline_data.data
+        except:
+            # Если не вышло, пробуем через blob (для новых версий)
+            img_data = response.candidates[0].content.parts[0].blob.data
+            
+        image_bytes = base64.b64decode(img_data) if isinstance(img_data, str) else img_data
+        
+        photo = BufferedInputFile(image_bytes, filename="gen.jpg")
+        await message.answer_photo(photo=photo, caption=f"✨ Готово! Запрос: {prompt}")
         usage_stats["image"] += 1
     except Exception as e:
-        await message.answer(f"❌ Ошибка генерации: {e}")
+        logger.error(f"Ошибка Imagen: {e}")
+        await message.answer("❌ Модель генерации временно недоступна. Попробуйте изменить описание или подождать.")
 
 # --- Обработка медиаконтента ---
 
@@ -173,3 +193,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
