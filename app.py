@@ -8,12 +8,13 @@ from aiogram.types import URLInputFile
 from aiogram.client.session.aiohttp import AiohttpSession
 from google import genai
 from google.genai import types as genai_types
+from aiohttp import web # Добавлено для веб-сервера
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Конфигурация из переменных окружения
+# Конфигурация
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 API_KEY = os.getenv("GEMINI_API_KEY")
 MY_ID_STR = os.getenv("MY_TELEGRAM_ID", "0")
@@ -24,7 +25,7 @@ client = None
 chat = None
 MODEL_ID = "gemini-2.0-flash"
 
-# Инициализация сессии и бота
+# Инициализация
 session = AiohttpSession()
 bot = Bot(token=TOKEN, session=session)
 dp = Dispatcher()
@@ -32,7 +33,8 @@ dp = Dispatcher()
 def is_owner(user_id):
     return MY_ID == 0 or user_id == MY_ID
 
-# Обработчики команд
+# --- ОБРАБОТЧИКИ ---
+
 @dp.message(Command("start"))
 async def start(message: types.Message):
     if not is_owner(message.from_user.id): return
@@ -53,16 +55,15 @@ async def draw(message: types.Message):
     if not is_owner(message.from_user.id): return
     prompt = message.text.replace("/draw", "").strip()
     if not prompt:
-        return await message.answer("Please provide a prompt after the command, e.g., /draw space cat")
+        return await message.answer("Please provide a prompt after the command.")
     
-    await message.answer("Generating image, please wait...")
+    await message.answer("Generating image...")
     url = f"https://image.pollinations.ai/prompt/{prompt}?width=1024&height=1024&nologo=true"
     try:
         await message.answer_photo(photo=URLInputFile(url), caption=f"Result for: {prompt}")
     except Exception as e:
         await message.answer("Error during image generation.")
 
-# Обработка голоса
 @dp.message(F.voice)
 async def handle_voice(message: types.Message):
     if not is_owner(message.from_user.id): return
@@ -70,51 +71,44 @@ async def handle_voice(message: types.Message):
         v_file = await bot.get_file(message.voice.file_id)
         v_data = await bot.download_file(v_file.file_path)
         response = chat.send_message(message=[
-            "Analyze this audio and respond accordingly.",
+            "Analyze this audio.",
             genai_types.Part.from_bytes(data=v_data.read(), mime_type="audio/ogg")
         ])
         await message.answer(response.text)
     except Exception as e:
-        await message.answer(f"Voice processing error: {e}")
+        await message.answer(f"Error: {e}")
 
-# Обработка фото
 @dp.message(F.photo)
 async def handle_photo(message: types.Message):
     if not is_owner(message.from_user.id): return
     try:
         p_file = await bot.get_file(message.photo[-1].file_id)
         p_data = await bot.download_file(p_file.file_path)
-        
-        prompt = message.caption or "Analyze this image in detail."
         response = chat.send_message(message=[
-            prompt,
+            message.caption or "Analyze this image.",
             genai_types.Part.from_bytes(data=p_data.read(), mime_type="image/jpeg")
         ])
         await message.answer(response.text)
     except Exception as e:
-        await message.answer(f"Photo analysis error: {e}")
+        await message.answer(f"Error: {e}")
 
-# Обработка документов (PDF/TXT)
 @dp.message(F.document)
 async def handle_doc(message: types.Message):
     if not is_owner(message.from_user.id): return
     allowed_types = ["application/pdf", "text/plain"]
     if message.document.mime_type not in allowed_types:
-        return await message.answer("Only PDF and TXT files are supported.")
-    
+        return await message.answer("Only PDF/TXT supported.")
     try:
         d_file = await bot.get_file(message.document.file_id)
         d_data = await bot.download_file(d_file.file_path)
-        
         response = chat.send_message(message=[
-            message.caption or "Analyze this document and summarize its content.",
+            message.caption or "Summarize document.",
             genai_types.Part.from_bytes(data=d_data.read(), mime_type=message.document.mime_type)
         ])
         await message.answer(response.text)
     except Exception as e:
-        await message.answer(f"Document processing error: {e}")
+        await message.answer(f"Error: {e}")
 
-# Обработка текста
 @dp.message(F.text)
 async def handle_text(message: types.Message):
     if not is_owner(message.from_user.id): return
@@ -122,41 +116,60 @@ async def handle_text(message: types.Message):
         response = chat.send_message(message.text)
         await message.answer(response.text)
     except Exception as e:
-        await message.answer(f"Gemini error: {e}")
+        await message.answer(f"Error: {e}")
 
-# Основная функция
+# --- ФИКТИВНЫЙ ВЕБ-СЕРВЕР ДЛЯ KOYEB ---
+
+async def handle_health(request):
+    return web.Response(text="OK")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get("/", handle_health)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    # Koyeb ищет порт 8000 по умолчанию
+    site = web.TCPSite(runner, "0.0.0.0", 8000)
+    await site.start()
+    logger.info("Web server for Health Check started on port 8000")
+
+# --- ЗАПУСК ---
+
 async def main():
     global chat, client
+    
+    # Запускаем фиктивный сервер в фоне
+    await start_web_server()
+
     if not API_KEY or not TOKEN:
-        logger.error("Critical error: GEMINI_API_KEY or TELEGRAM_TOKEN is missing!")
+        logger.error("Missing credentials!")
         return
 
     try:
         client = genai.Client(api_key=API_KEY)
         chat = client.chats.create(model=MODEL_ID, config=genai_types.GenerateContentConfig(
-            system_instruction="You are a professional AI assistant in Telegram. You can analyze photos, documents, and voice. Always respond in the user's language."
+            system_instruction="Professional AI assistant. No emojis. Professional tone."
         ))
         logger.info("Gemini initialized.")
     except Exception as e:
-        logger.error(f"Initialization failed: {e}")
+        logger.error(f"Init failed: {e}")
         return
 
-    logger.info("Waiting for network (30s)...")
-    await asyncio.sleep(30)
+    # Уменьшаем время ожидания, на Koyeb сеть работает сразу
+    await asyncio.sleep(5)
 
     try:
         ip = socket.gethostbyname('api.telegram.org')
-        logger.info(f"Network check: Telegram IP found: {ip}")
-    except Exception:
-        logger.error("DNS issue detected. Retrying...")
+        logger.info(f"Telegram DNS OK: {ip}")
+    except Exception as e:
+        logger.error(f"DNS failed: {e}")
 
-    logger.info("Starting bot...")
+    logger.info("Starting polling...")
     try:
         await bot.delete_webhook(drop_pending_updates=True)
         await dp.start_polling(bot)
     except Exception as e:
         logger.error(f"Polling error: {e}")
-        await asyncio.sleep(60)
         os._exit(1)
 
 if __name__ == "__main__":
