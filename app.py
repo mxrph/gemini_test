@@ -5,6 +5,7 @@ import time
 import base64
 from io import BytesIO
 from aiogram import Bot, Dispatcher, types, F
+from aiogram.types import BufferedInputFile  # Добавь эту строку
 from aiogram.filters import Command
 import google.generativeai as genai
 from aiohttp import web
@@ -26,7 +27,7 @@ dp = Dispatcher()
 # Модели из твоего списка
 PRIMARY_VARIANTS = ["models/gemini-3-flash-preview", "models/gemini-2.5-flash"]
 FALLBACK_VARIANTS = ["models/gemini-2.0-flash-lite"]
-IMAGE_GEN_MODEL = "models/imagen-4.0-generate-001"
+IMAGE_GEN_MODEL = "models/imagen-3.0-generate-001"
 VIDEO_GEN_MODEL = "models/veo-3.1-generate-preview"
 
 # Глобальные счетчики и сессия
@@ -111,19 +112,27 @@ async def image_gen_cmd(message: types.Message):
 
     await bot.send_chat_action(message.chat.id, "upload_photo")
     try:
-        model = genai.GenerativeModel(IMAGE_GEN_MODEL)
-        # В некоторых версиях API используется generate_images или generate_content
-        response = model.generate_content(prompt)
+        # Пробуем Imagen 3 (она стабильнее)
+        model = genai.ImageGenerationModel("imagen-3.0-generate-001")
+        response = model.generate_images(prompt=prompt, number_of_images=1)
         
-        # Извлечение картинки из ответа Imagen
-        img_data = response.candidates[0].content.parts[0].inline_data.data
-        image_bytes = base64.b64decode(img_data)
+        # Получаем байты изображения
+        image_bytes = response.images[0]._pil_image
         
-        await message.answer_photo(types.BufferedInputFile(image_bytes, filename="gen.jpg"), caption="Готово!")
+       # Конвертируем PIL в байты для отправки
+        byte_io = BytesIO()
+        image_bytes.save(byte_io, 'JPEG')
+        image_data = byte_io.getvalue() # Получаем чистые байты
+        
+        # Правильная отправка для aiogram 3.x
+        photo = BufferedInputFile(image_data, filename="gen.jpg")
+        await message.answer_photo(photo=photo, caption=f"✨ Готово! Запрос: {prompt}")
         usage_stats["image"] += 1
-    except Exception as e:
-        await message.answer(f"❌ Ошибка генерации: {e}")
 
+    except Exception as e:
+        logger.error(f"Ошибка Imagen: {e}")
+        await message.answer(f"❌ Модель Imagen 4/3 пока недоступна для вашего региона или ключа. Попробуйте позже или проверьте AI Studio.")
+        
 @dp.message(Command("video"))
 async def video_gen_cmd(message: types.Message):
     if MY_ID and message.from_user.id != MY_ID: return
@@ -178,3 +187,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
